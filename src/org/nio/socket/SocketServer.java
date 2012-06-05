@@ -24,6 +24,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -88,16 +89,20 @@ public class SocketServer extends Thread{
 				Set<SelectionKey> keys = selector.selectedKeys();
 				Iterator<SelectionKey> ite = keys.iterator();
 				while (ite.hasNext()) {
-					ite.remove();
+					
 					SelectionKey key = ite.next();
+					System.out.println(key);
+					ite.remove();
 					
 					if(!key.isValid())
 						continue;
 					
 					if(key.isAcceptable()) {
+						System.out.println(new Date() + " Selector Accept ");
 						SocketChannel channel = server.accept();
 						channel.configureBlocking( false );
-						SocketClient sc = newSocketClient(channel);
+						SocketClient sc = newSocketClient(channel,selector);
+						channel.finishConnect();
 						if(sc!=null) {
 							if(sslContext!=null) {
 								sc.setSSLContext(sslContext);
@@ -108,13 +113,18 @@ public class SocketServer extends Thread{
 					}
 					
 					if(key.isReadable()) {
+						
+						System.out.println(new Date() + " Selector Read "+key.attachment());
 						key.interestOps(0);
 						handleRead(key);
+						continue;
 					}
 					
 					if(key.isWritable()) {
+						System.out.println(new Date() + " Selector Write ");
 						key.interestOps(0);
 						handleWrite(key);
+						continue;
 					}
 				}
 			}
@@ -123,6 +133,10 @@ public class SocketServer extends Thread{
 		}
 	}
 	
+	public void setExecuterService(ExecutorService executer) {
+		this.executer = executer;
+	}
+
 	/**
 	 * This method will be triggered by the server each time the there is a 
 	 * new connection made by to the sever. 
@@ -131,8 +145,8 @@ public class SocketServer extends Thread{
 	 * @param sc
 	 * @return
 	 */
-	protected SocketClient newSocketClient(SocketChannel sc) {
-		return new SocketClient(sc);
+	protected SocketClient newSocketClient(SocketChannel sc, Selector key) {
+		return new SocketClient(sc, key);
 	}
 	
 	private void handleRead(SelectionKey key) {
@@ -142,10 +156,17 @@ public class SocketServer extends Thread{
 			// So we should just unblock the thread
 			sc.unblockRead();
 		}else {
+			NIOSocketInputStream ins = (NIOSocketInputStream)sc.getInputStream();
+			if(ins.tryLock()) {
 			// Get the executer to run the request
-			ReadHandler rh = new ReadHandler(key);
-			executer.execute(rh);
+				ReadHandler rh = new ReadHandler(key);
+				executer.execute(rh);
+				ins.unlock();
+			}else {
+				// Some one is already reading the data so do not re initiate a new Handler to work on the same data set 
+			}
 		}
+		
 	}
 	
 	/*
@@ -169,11 +190,10 @@ public class SocketServer extends Thread{
 	
 	private class ReadHandler implements Runnable {
 		private SocketClient socketClient;
-		private SelectionKey key = null;
+		
 		
 		ReadHandler(final SelectionKey sc ) {
 			socketClient = (SocketClient)sc.attachment();
-			key = sc;
 		}
 		@Override
 		public void run() {
@@ -183,10 +203,6 @@ public class SocketServer extends Thread{
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
-			}finally {
-				if(socketClient.isConnected()) {
-					key.interestOps(SelectionKey.OP_READ);
-				}
 			}
 			
 		}

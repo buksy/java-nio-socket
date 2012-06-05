@@ -38,7 +38,7 @@ public class SocketClient {
 	
 	//private Selector selector = null;
 	private SocketChannel client = null;
-	private SelectionKey selctionKey = null;
+	private Selector selector = null;
 	private InetSocketAddress address = null;
 
 	private SSLContext sslContext; 
@@ -51,16 +51,19 @@ public class SocketClient {
 	private NIOSocketInputStream socketInputStream;
 	private NIOSocketOutputStream socketOutputStream = null; 
 	
-	public SocketClient(InetSocketAddress address) throws IOException {	
+	public SocketClient(InetSocketAddress address) {	
 		this.address = address;
-		socketInputStream = new NIOSocketInputStream();
+		socketInputStream = new NIOSocketInputStream(this);
 		socketOutputStream = new NIOSocketOutputStream(this);
 	}
 	
 	
-	protected SocketClient(SocketChannel client) {
+	protected SocketClient(SocketChannel client,Selector key) {
 		this.client = client;
 		initConnDone = true;
+		selector = key;
+		socketInputStream = new NIOSocketInputStream(this);
+		socketOutputStream = new NIOSocketOutputStream(this);
 	}
 	
 	public void setSSLContext( SSLContext context) {
@@ -79,7 +82,6 @@ public class SocketClient {
 		new Thread() {
 			
 			public void run() {
-				Selector selector = null;
 				try {
 					selector = Selector.open();
 					client.register(selector, SelectionKey.OP_CONNECT);
@@ -106,7 +108,7 @@ public class SocketClient {
 									}
 									client.register(selector,SelectionKey.OP_READ);
 									initConnDone = true;
-									selctionKey = key;
+									
 								}
 							}
 							if(key.isReadable()) {
@@ -204,8 +206,8 @@ public class SocketClient {
 	protected void triggerWrite() throws IOException {
 		if (client != null && client.isOpen()) {
 			try {
-				client.register(selctionKey.selector(), SelectionKey.OP_WRITE | SelectionKey.OP_READ);
-				selctionKey.selector().wakeup();
+				client.register(selector, SelectionKey.OP_WRITE | SelectionKey.OP_READ, this);
+				selector.wakeup();
 			} catch (ClosedChannelException e) {
 				throw new IOException ("Connection Closed ");
 			}
@@ -234,6 +236,8 @@ public class SocketClient {
 		}
 		if(out < 0) {
 			close();
+		}else {
+			client.register(selector, SelectionKey.OP_READ,this);
 		}
 		return out;
 	}

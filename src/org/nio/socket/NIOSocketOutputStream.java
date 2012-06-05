@@ -31,7 +31,7 @@ public class NIOSocketOutputStream extends OutputStream{
 	
 	private static final int MAX_BUFF_SIZE = 1024;
 	
-	NIOSocketOutputStream(SocketClient cli) throws IOException {
+	NIOSocketOutputStream(SocketClient cli) {
 		holder = new ByteArrayOutputStream();
 		client = cli;
 	}
@@ -104,7 +104,10 @@ public class NIOSocketOutputStream extends OutputStream{
 		synchronized (isWriteWait) {
 			isWriteWait = false;
 		}
-		notifyAll();
+		synchronized (this) {
+			this.notifyAll();
+		}
+		
 	}
 	
 	
