@@ -101,10 +101,11 @@ public class SSLHandler {
 		return count;
 	}
 	
-	private void readAndUnwarp(ByteBuffer buff) throws IOException {
+	private int readAndUnwarp(ByteBuffer buff) throws IOException {
 		Status status = Status.OK;
-        if (channel.isOpen()) {
-            throw new IOException ("Engine is closed");
+        if (!channel.isOpen()) {
+        	return -1;
+            //throw new IOException ("Engine is closed");
         }
         boolean needRead;
         if (netRecvBuffer.hasRemaining()) {
@@ -122,7 +123,8 @@ public class SSLHandler {
 
                     x = channel.read(netRecvBuffer);
                     if (x == -1) {
-                        throw new IOException ("connection closed for reading");
+                    	return x;
+                        //throw new IOException ("connection closed for reading");
                     }
                     netRecvBuffer.flip();
                 }
@@ -138,11 +140,13 @@ public class SSLHandler {
                 	break;
                 } else if (status == Status.CLOSED) {
                 	buff.flip();
-                    throw new IOException("SSLEngine Closed");
+                	return -1;
+                    //throw new IOException("SSLEngine Closed");
                     
                 }
             } while (status != Status.OK);
-        
+            
+        return buff.position();
     }
 	
 	void doHandshake () throws IOException {

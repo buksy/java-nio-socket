@@ -27,6 +27,7 @@ public class NIOSocketOutputStream extends OutputStream{
 	private ByteArrayOutputStream holder = null;
 	private SocketClient client = null; 
 	private boolean stremClosed = false;
+	private Boolean isWriteWait = new Boolean(false);
 	
 	private static final int MAX_BUFF_SIZE = 1024;
 	
@@ -73,11 +74,39 @@ public class NIOSocketOutputStream extends OutputStream{
 	
 	@Override
 	public void flush() throws IOException {
+		
 		if(stremClosed) {
 			throw new IOException("Write stream closed");
 		}
-		client.sendNow();
+		
+		client.triggerWrite();
+		synchronized (isWriteWait) {
+			isWriteWait = true;
+		}
+		
+		synchronized (this) {
+			try {
+				while(isWriteWait) {
+					wait();
+					if(stremClosed) {
+						throw new IOException("Write stream closed");
+					}
+				}
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		client.doWrite();
 	}
+	
+	protected void notifyWrite() {
+		synchronized (isWriteWait) {
+			isWriteWait = false;
+		}
+		notifyAll();
+	}
+	
 	
 	protected ByteBuffer getByteBuffer() {
 		ByteBuffer buff = null;
@@ -99,5 +128,9 @@ public class NIOSocketOutputStream extends OutputStream{
 	private void checkAndFlush() throws IOException{
 		if (holder.size() > MAX_BUFF_SIZE)
 			flush();
+	}
+
+	protected boolean isWriteWait() {
+		return isWriteWait;
 	}
 }

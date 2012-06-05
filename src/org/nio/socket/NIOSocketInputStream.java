@@ -29,6 +29,7 @@ public class NIOSocketInputStream extends InputStream {
 	
 	private SocketClient readClient;
 	private boolean stremClosed = false;
+	private Boolean isReadWait = false;
 	
 	public NIOSocketInputStream () {
 		streamBuffer = ByteBuffer.allocate(1024);
@@ -73,11 +74,16 @@ public class NIOSocketInputStream extends InputStream {
 				if(available > 0) {
 					continue;
 				}else if (available == 0 ) {
+					synchronized (isReadWait) {
+						isReadWait = true;
+					}
 						// Block the caller
 					try {
 						if(read_size == 0 ) {
 							synchronized (this) {
-								wait();
+								while(isReadWait()) {
+									wait();
+								}
 							}
 						}
 						else {
@@ -95,7 +101,7 @@ public class NIOSocketInputStream extends InputStream {
 	}
 	
 	@Override
-	public int available() throws IOException {
+	public synchronized int available() throws IOException {
 		while (true) {
 			
 			if(stremClosed) {
@@ -122,9 +128,20 @@ public class NIOSocketInputStream extends InputStream {
 	public void close() throws IOException {
 		stremClosed = true;
 		synchronized (this) {
-			notifyAll();
+			notifyRead();
 		}
 		
+	}
+	
+	protected boolean isReadWait(){
+		return isReadWait;
+	}
+	
+	protected void notifyRead() {
+		synchronized (isReadWait) {
+			isReadWait = true;
+		}
+		notifyAll();
 	}
 	
 }

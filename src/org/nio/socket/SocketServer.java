@@ -97,11 +97,13 @@ public class SocketServer extends Thread{
 					if(key.isAcceptable()) {
 						SocketChannel channel = server.accept();
 						channel.configureBlocking( false );
-						SocketClient sc = new SocketClient(channel);
-						if(sslContext!=null) {
-							sc.setSSLContext(sslContext);
+						SocketClient sc = newSocketClient(channel);
+						if(sc!=null) {
+							if(sslContext!=null) {
+								sc.setSSLContext(sslContext);
+							}
+							channel.register(selector, SelectionKey.OP_READ, sc);
 						}
-						channel.register(selector, SelectionKey.OP_READ, sc);
 						continue;
 					}
 					
@@ -117,47 +119,74 @@ public class SocketServer extends Thread{
 				}
 			}
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
 	
+	/**
+	 * This method will be triggered by the server each time the there is a 
+	 * new connection made by to the sever. 
+	 * If you want to handled the connections and check the connections. 
+	 * Override this method
+	 * @param sc
+	 * @return
+	 */
 	protected SocketClient newSocketClient(SocketChannel sc) {
 		return new SocketClient(sc);
 	}
 	
 	private void handleRead(SelectionKey key) {
-		ReadHandler rh = new ReadHandler(key);
-		executer.execute(rh);
+		SocketClient sc = (SocketClient)key.attachment();
+		if(sc.isReadBlocked()) { 
+			// If there is block read going on, this means some thread is in a waiting state
+			// So we should just unblock the thread
+			sc.unblockRead();
+		}else {
+			// Get the executer to run the request
+			ReadHandler rh = new ReadHandler(key);
+			executer.execute(rh);
+		}
 	}
 	
-	private void handleWrite(SelectionKey key) {
+	/*
+	 * You can either get your server thread to do the writing,
+	 * if you are using the stream based approach. you can get the thread invoking the 
+	 * flush to do the writing 
+	 */
+	private void handleWrite(SelectionKey key) throws IOException {
+		SocketClient sc = (SocketClient)key.attachment();
+		if(sc.isWriteBlocked()) {
+			// A thread is interested in doing the write, some thread is using streams
+			sc.unblockWrite();
+		}else {
+			// Just let server thread do the write
+			sc.doWrite();
+		}
+		if(sc.isConnected()) 
+			key.interestOps(SelectionKey.OP_READ);
 		
 	}
 	
 	private class ReadHandler implements Runnable {
-		private SelectionKey key;
+		private SocketClient socketClient;
+		private SelectionKey key = null;
 		
-		ReadHandler(SelectionKey sc ) {
+		ReadHandler(final SelectionKey sc ) {
+			socketClient = (SocketClient)sc.attachment();
 			key = sc;
 		}
 		@Override
 		public void run() {
 			try {
-				
-				SocketClient sc = (SocketClient)key.attachment();
-				sc.doRead();
 				if(handler!=null)
-					handler.handle(sc);
-				
-				key.interestOps(SelectionKey.OP_READ);
-				
+					handler.handle(socketClient);
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}finally {
-				key.interestOps(SelectionKey.OP_READ);
-				key.selector().wakeup();
+				if(socketClient.isConnected()) {
+					key.interestOps(SelectionKey.OP_READ);
+				}
 			}
 			
 		}

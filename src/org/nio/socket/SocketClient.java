@@ -46,6 +46,7 @@ public class SocketClient {
 	private SSLHandler sslHandler = null;
 	
 	private boolean initConnDone = false;
+	private boolean isClosed = false;
 	
 	private NIOSocketInputStream socketInputStream;
 	private NIOSocketOutputStream socketOutputStream = null; 
@@ -109,7 +110,7 @@ public class SocketClient {
 								}
 							}
 							if(key.isReadable()) {
-								doRead();
+								unblockRead();
 								client.register(selector,SelectionKey.OP_READ);
 							}
 							if(key.isWritable()) {
@@ -140,8 +141,25 @@ public class SocketClient {
 		
 	}
 
-	protected void doRead() throws IOException {
-		socketInputStream.notifyAll();
+	protected SocketChannel getSocketChannel() {
+		return client;
+	}
+	
+	protected boolean isReadBlocked() {
+		return socketInputStream.isReadWait();
+	}
+	
+	protected void unblockRead() {
+		socketInputStream.notifyRead();
+	}
+	
+	
+	protected boolean isWriteBlocked() {
+		return socketOutputStream.isWriteWait();
+	}
+	
+	protected void unblockWrite() {
+		socketOutputStream.notifyWrite();
 	}
 	
 	protected void doWrite() throws IOException{
@@ -170,14 +188,20 @@ public class SocketClient {
 	}
 	
 	public void close() throws IOException{
-		if(sslHandler != null ) {
-			sslHandler.stop();
+		if(!isClosed) {
+			isClosed = true;
+			if(sslHandler != null ) {
+				sslHandler.stop();
+			}
+			client.close();
+			socketInputStream.close();
+			socketOutputStream.close();
+			initConnDone = false;
 		}
-		client.close();
 	}
 	
 	
-	protected void sendNow() throws IOException {
+	protected void triggerWrite() throws IOException {
 		if (client != null && client.isOpen()) {
 			try {
 				client.register(selctionKey.selector(), SelectionKey.OP_WRITE | SelectionKey.OP_READ);
@@ -202,12 +226,16 @@ public class SocketClient {
 
 
 	protected int readToBuffer(ByteBuffer buffer) throws IOException{
+		int out = 0;
 		if(sslHandler!=null) {
-			return sslHandler.doRead(buffer);
+			out = sslHandler.doRead(buffer);
 		}else {
-			return client.read(buffer);
+			out = client.read(buffer);
 		}
-		
+		if(out < 0) {
+			close();
+		}
+		return out;
 	}
 
 }
