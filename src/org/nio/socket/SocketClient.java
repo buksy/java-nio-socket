@@ -31,6 +31,7 @@ import java.util.Set;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLException;
 
 
 public class SocketClient {
@@ -70,6 +71,17 @@ public class SocketClient {
 		this.sslContext = context;
 	}
 	
+	protected void buildSSLHandler(SSLContext context, boolean clientmode) throws IOException {
+		if(context!=null && client!=null  ) {
+			setSSLContext(context);
+			sslEngine = sslContext.createSSLEngine(client.socket().getInetAddress().getHostName(), client.socket().getPort());
+			sslEngine.setUseClientMode(clientmode);
+			sslHandler = new SSLHandler(sslEngine, client);
+			//sslHandler.doHandshake();
+			//System.out.println(((!clientmode)? "Server ": "Client ") + "Handshake done");
+		}
+	}
+	
 	public void connect() throws IOException {
 		
 		if(initConnDone)
@@ -86,7 +98,7 @@ public class SocketClient {
 					selector = Selector.open();
 					client.register(selector, SelectionKey.OP_CONNECT);
 					
-					while (true) {
+					while (!isClosed) {
 						int nsel = selector.select();
 						if (nsel == 0)
 							continue;
@@ -98,26 +110,26 @@ public class SocketClient {
 							it.remove();
 							if (!key.isValid()) 
 								continue;
-							if(key.isConnectable()) {
+							if(key.isValid() && key.isConnectable()) {
 								if(client.finishConnect()) {
 									if(sslContext!=null) { 
 										// Do the SSL handshake stuff ;
-										sslEngine = sslContext.createSSLEngine(client.socket().getInetAddress().getHostName(), client.socket().getPort());
-										sslEngine.setUseClientMode(true);
-										sslHandler = new SSLHandler(sslEngine, client,key);
+										buildSSLHandler(sslContext,true);
 									}
 									client.register(selector,SelectionKey.OP_READ);
 									initConnDone = true;
 									
 								}
 							}
-							if(key.isReadable()) {
+							if(key.isValid() && key.isReadable()) {
 								unblockRead();
-								client.register(selector,SelectionKey.OP_READ);
+								if(client.isOpen())
+									client.register(selector,SelectionKey.OP_READ);
 							}
-							if(key.isWritable()) {
-								doWrite();
-								client.register(selector,SelectionKey.OP_READ);
+							if(key.isValid() && key.isWritable()) {
+								unblockWrite();
+								if(client.isOpen())
+									client.register(selector,SelectionKey.OP_READ);
 							}
 						}
 					}
@@ -161,18 +173,24 @@ public class SocketClient {
 	}
 	
 	protected void unblockWrite() {
+		System.out.println("SocketClient.unblockWrite()");
 		socketOutputStream.notifyWrite();
 	}
 	
-	protected void doWrite() throws IOException{
+	protected int  doWrite() throws IOException{
+		System.out.println("SocketClient.doWrite()");
 		if(sslHandler!=null) {
-			sslHandler.doWrite(socketOutputStream.getByteBuffer());
+			return sslHandler.doWrite(socketOutputStream.getByteBuffer());
 		}else {
 			//Write the non SSL bit of the transfer
 			ByteBuffer buff = socketOutputStream.getByteBuffer();
+			int out = buff.remaining();
 			while(buff.hasRemaining()) {
-				client.write(buff);
+				int x = client.write(buff);
+				if(x < 0)
+					return x;
 			}
+			return out;
 		}
 	}
 	
@@ -199,12 +217,16 @@ public class SocketClient {
 			socketInputStream.close();
 			socketOutputStream.close();
 			initConnDone = false;
+			if(selector!=null) {
+				selector.wakeup();
+			}
 		}
 	}
 	
 	
 	protected void triggerWrite() throws IOException {
 		if (client != null && client.isOpen()) {
+			System.out.println("SocketClient.triggerWrite()");
 			try {
 				client.register(selector, SelectionKey.OP_WRITE | SelectionKey.OP_READ, this);
 				selector.wakeup();

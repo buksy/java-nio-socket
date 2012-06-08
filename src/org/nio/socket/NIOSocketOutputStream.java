@@ -21,6 +21,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class NIOSocketOutputStream extends OutputStream{
 
@@ -28,6 +31,9 @@ public class NIOSocketOutputStream extends OutputStream{
 	private SocketClient client = null; 
 	private boolean stremClosed = false;
 	private Boolean isWriteWait = new Boolean(false);
+	
+	private Lock writeLock = new ReentrantLock();
+	private Condition cond = writeLock.newCondition();
 	
 	private static final int MAX_BUFF_SIZE = 1024;
 	
@@ -73,39 +79,53 @@ public class NIOSocketOutputStream extends OutputStream{
 	}
 	
 	@Override
-	public void flush() throws IOException {
+	public void flush() throws IOException {		
 		
 		if(stremClosed) {
 			throw new IOException("Write stream closed");
 		}
-		
-		client.triggerWrite();
-		synchronized (isWriteWait) {
-			isWriteWait = true;
-		}
-		
-		synchronized (this) {
-			try {
-				while(isWriteWait) {
-					wait();
-					if(stremClosed) {
-						throw new IOException("Write stream closed");
-					}
-				}
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+		try{
+			writeLock.lock();
+			synchronized (isWriteWait) {
+				isWriteWait = true;
 			}
+			client.triggerWrite();
+			while(isWriteWait) {
+				cond.await();
+			}
+			
+//			synchronized (this) {
+//				try {
+//					while(isWriteWait) {
+//						wait();
+//						if(stremClosed) {
+//							throw new IOException("Write stream closed");
+//						}
+//					}
+//				} catch (InterruptedException e) {
+//					// TODO Auto-generated catch block
+//					e.printStackTrace();
+//				}
+//			}
+			client.doWrite();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}finally {
+			writeLock.unlock();
 		}
-		client.doWrite();
+		
 	}
 	
 	protected void notifyWrite() {
-		synchronized (isWriteWait) {
-			isWriteWait = false;
-		}
-		synchronized (this) {
-			this.notifyAll();
+		try {
+			writeLock.lock();
+			synchronized (isWriteWait) {
+				isWriteWait = false;
+			}
+			cond.signal();
+		}finally{
+			writeLock.unlock();
 		}
 		
 	}
@@ -122,10 +142,10 @@ public class NIOSocketOutputStream extends OutputStream{
 	
 	@Override
 	public void close() throws IOException {
-		if(stremClosed) {
-			throw new IOException("Write stream closed");
+		if(!stremClosed) {
+			stremClosed = true;
 		}
-		stremClosed = true;
+		
 	}
 	
 	private void checkAndFlush() throws IOException{

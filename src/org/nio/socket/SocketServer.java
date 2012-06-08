@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.CharBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
@@ -76,61 +77,75 @@ public class SocketServer extends Thread{
 	
 	@Override
 	public void run() {
-		try {
-			server = ServerSocketChannel.open();
-			server.configureBlocking( false );
-			ServerSocket socket = server.socket();
-			socket.bind( listener );
-			selector = Selector.open();
-			server.register( selector, server.validOps() );
+		
+			try {
+				server = ServerSocketChannel.open();
+				server.configureBlocking( false );
+				ServerSocket socket = server.socket();
+				socket.bind( listener );
+				selector = Selector.open();
+				server.register( selector, server.validOps() );
+			} catch (ClosedChannelException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+				return;
+			} catch (IOException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+				return;
+			}
 			
 			while (true) {
-				selector.select();
+				try {
+					selector.select();
+		
 				Set<SelectionKey> keys = selector.selectedKeys();
 				Iterator<SelectionKey> ite = keys.iterator();
 				while (ite.hasNext()) {
 					
-					SelectionKey key = ite.next();
-					System.out.println(key);
-					ite.remove();
-					
-					if(!key.isValid())
-						continue;
-					
-					if(key.isAcceptable()) {
-						System.out.println(new Date() + " Selector Accept ");
-						SocketChannel channel = server.accept();
-						channel.configureBlocking( false );
-						SocketClient sc = newSocketClient(channel,selector);
-						channel.finishConnect();
-						if(sc!=null) {
-							if(sslContext!=null) {
-								sc.setSSLContext(sslContext);
-							}
-							channel.register(selector, SelectionKey.OP_READ, sc);
-						}
-						continue;
-					}
-					
-					if(key.isReadable()) {
+						SelectionKey key = ite.next();
+						System.out.println(key);
+						ite.remove();
 						
-						System.out.println(new Date() + " Selector Read "+key.attachment());
-						key.interestOps(0);
-						handleRead(key);
-						continue;
+						if(!key.isValid())
+							continue;
+						
+						if(key.isValid() && key.isAcceptable()) {
+							System.out.println(new Date() + " Selector Accept ");
+							SocketChannel channel = server.accept();
+							channel.configureBlocking( false );
+							SocketClient sc = newSocketClient(channel,selector);
+							channel.finishConnect();
+							if(sc!=null) {
+								if(sslContext!=null) {
+									//sc.setSSLContext(sslContext);
+									sc.buildSSLHandler(sslContext,false);
+								}
+								channel.register(selector, SelectionKey.OP_READ, sc);
+							}
+							continue;
+						}
+						
+						if(key.isValid() && key.isReadable()) {
+							
+							System.out.println(new Date() + " Selector Read "+key.attachment());
+							key.interestOps(0);
+							handleRead(key);
+							continue;
+						}
+						
+						if(key.isValid() && key.isWritable()) {
+							System.out.println(new Date() + " Selector Write ");
+							key.interestOps(0);
+							handleWrite(key);
+							continue;
+						}
 					}
-					
-					if(key.isWritable()) {
-						System.out.println(new Date() + " Selector Write ");
-						key.interestOps(0);
-						handleWrite(key);
-						continue;
-					}
+				}catch (IOException e) {
+					e.printStackTrace();
 				}
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+				
 	}
 	
 	public void setExecuterService(ExecutorService executer) {

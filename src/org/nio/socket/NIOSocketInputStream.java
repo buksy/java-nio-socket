@@ -145,8 +145,10 @@ public class NIOSocketInputStream extends InputStream {
 	
 	@Override
 	public void close() throws IOException {
-		stremClosed = true;
-		notifyRead();	
+		if(!stremClosed) {
+			stremClosed = true;
+			notifyRead();	
+		}
 	}
 	
 	protected boolean isReadWait(){
